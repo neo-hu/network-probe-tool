@@ -6,7 +6,7 @@ Use `go get`
 $ go get github.com/neo-hu/network-probe-tool
 ```
 
-###ping
+### ping
 ```go
 p := ping.NewPing(ping.IntervalOption(time.Millisecond))
 for _, host := range []string{"www.ip8.me", "www.sina.com.cn"} {
@@ -33,7 +33,7 @@ round-trip min/avg/max/mdev = 182.29158ms/18.935195ms/189.35195ms/2.12
 [www.sina.com.cn(123.125.104.150)]10 packets transmitted, 9 packets received, 10.00% packet loss
 round-trip min/avg/max/mdev = 5.220302ms/1.513171ms/13.618541ms/2.82
 ```
-###http
+### http
 ```go
 req, err := gohttp.NewRequest("GET", "https://www.ip8.me/", nil)
 if err != nil {
@@ -64,7 +64,7 @@ Header:            map[Content-Type:[text/html; charset=utf-8] Connection:[keep-
 ```
 
 
-###mtr
+### mtr
 ```go
 type StringSet map[string]struct{}
 
