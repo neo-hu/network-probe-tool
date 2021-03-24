@@ -16,15 +16,14 @@ import (
 	"time"
 )
 
-
 type entryReply struct {
 	r *reply
 	e *entry
 }
 type Ping struct {
-	ipv4Fd       int
-	ipv6Fd       int
-	s            *_select.Select
+	ipv4Fd int
+	ipv6Fd int
+	s      *_select.Select
 
 	ident        int
 	interval     time.Duration
@@ -34,8 +33,10 @@ type Ping struct {
 	closeFlag    int32
 
 	buffer []byte
-	seq    int
-	seqMap map[int]*entryReply
+
+	seqPool *icmp2.SeqPool
+	//seq    int
+	//seqMap map[int]*entryReply
 }
 
 type Option func(*Ping)
@@ -56,13 +57,14 @@ func NewPing(opts ...Option) *Ping {
 	p := &Ping{
 		ident:    os.Getpid() & 0xFFFF,
 		interval: time.Millisecond,
-		seqMap:   map[int]*entryReply{},
 		buffer:   make([]byte, 4096),
 		s:        _select.NewSelect(),
 	}
+
 	for _, opt := range opts {
 		opt(p)
 	}
+	p.seqPool = icmp2.NewSeqPool(uint16(p.ident))
 	return p
 }
 
@@ -121,31 +123,31 @@ func (p *Ping) send(e *entry, r *reply) error {
 		typ = ipv4.ICMPTypeEcho
 		fd = p.ipv4Fd
 	}
-	p.seq += 1
+	ident, seq := p.seqPool.Apply(&entryReply{
+		r: r,
+		e: e,
+	})
 	if e.dataSize > len(p.buffer) {
 		p.buffer = make([]byte, e.dataSize)
 	}
 	bytes, err := (&icmp.Message{
 		Type: typ, Code: 0,
 		Body: &icmp.Echo{
-			ID:   p.ident,
-			Seq:  p.seq,
+			ID:   int(ident),
+			Seq:  int(seq),
 			Data: p.buffer[:e.dataSize],
 		},
 	}).Marshal(nil)
 	if err != nil {
+		p.seqPool.Free(ident, seq)
 		return err
 	}
 	err = syscall.Sendto(fd, bytes, 0, e.sa)
-	if err == nil {
-		p.seqMap[p.seq] = &entryReply{
-			r: r,
-			e: e,
-		}
+	if err != nil {
+		p.seqPool.Free(ident, seq)
 	}
 	return err
 }
-
 
 func (p *Ping) Stop() (err error) {
 	if atomic.LoadInt32(&p.startingFlag) != 1 {
@@ -291,17 +293,14 @@ func (p *Ping) waitForReply(waitTime time.Duration) (bool, error) {
 		return false, err
 	}
 	if pkt, ok := m.Body.(*icmp.Echo); ok {
-		if pkt.ID != p.ident {
+		v := p.seqPool.Free(uint16(pkt.ID), uint16(pkt.Seq))
+		if v == nil {
 			return false, nil
 		}
-		r, ok := p.seqMap[pkt.Seq]
-		if !ok {
-			return false, nil
-		}
+		r := v.(*entryReply)
 		if r.r.elapsed == ResultUnUsed {
 			r.r.elapsed = time.Since(r.r.sendTime)
 			elapsed := float64(r.r.elapsed) / float64(time.Millisecond)
-			delete(p.seqMap, pkt.Seq)
 			if r.e.recv == 0 {
 				r.e.oldMean = elapsed
 			} else {
@@ -319,7 +318,6 @@ func (p *Ping) waitForReply(waitTime time.Duration) (bool, error) {
 	}
 	return true, nil
 }
-
 
 func (p *Ping) isClosing() bool {
 	return atomic.LoadInt32(&p.closeFlag) == 1

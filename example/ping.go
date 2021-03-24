@@ -15,10 +15,10 @@ func main() {
 	var interval = icmp.DefaultInterval
 	var dataSize = icmp.DefaultDataSize
 
-	flag.IntVar(&count, "count", count, "count of pings to send to each target")
-	flag.DurationVar(&timeout, "timeout", timeout, "individual target initial timeout")
-	flag.DurationVar(&interval, "interval", interval, "interval between sending ping packets")
-	flag.IntVar(&dataSize, "data-size", dataSize,"amount of ping data to send, in bytes")
+	flag.IntVar(&count, "c", count, "count of pings to send to each target")
+	flag.DurationVar(&timeout, "t", timeout, "individual target initial timeout")
+	flag.DurationVar(&interval, "i", interval, "interval between sending ping packets")
+	flag.IntVar(&dataSize, "d", dataSize, "amount of ping data to send, in bytes")
 	flag.Parse()
 	if flag.NArg() == 0 {
 		fmt.Printf("Usage of %s www.ip8.me\n", os.Args[0])

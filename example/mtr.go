@@ -26,16 +26,16 @@ func (ms StringSet) String() string {
 }
 
 func main() {
-	var count  = 3
-	var maxTTL  = 30
+	var count = 3
+	var maxTTL = 30
 	var timeout = icmp.DefaultTimeout
 	var interval = icmp.DefaultInterval
 	var dataSize = icmp.DefaultDataSize
 	flag.IntVar(&maxTTL, "max-ttl", maxTTL, "Specifies the maximum number of hops (max time-to-live value) traceroute will probe")
-	flag.IntVar(&count, "count", count, "count of pings to send to each target")
-	flag.DurationVar(&timeout, "timeout", timeout,"individual target initial timeout")
-	flag.DurationVar(&interval, "interval", interval,"interval between sending ping packets")
-	flag.IntVar(&dataSize, "data-size", dataSize,"amount of ping data to send, in bytes")
+	flag.IntVar(&count, "c", count, "count of pings to send to each target")
+	flag.DurationVar(&timeout, "t", timeout, "individual target initial timeout")
+	flag.DurationVar(&interval, "i", interval, "interval between sending ping packets")
+	flag.IntVar(&dataSize, "d", dataSize, "amount of ping data to send, in bytes")
 	flag.Parse()
 	target := flag.Arg(0)
 	if target == "" {
@@ -90,6 +90,6 @@ func main() {
 			avg = sum / num
 		}
 		fmt.Println(i+1, ips.String(), max, min, avg,
-			(float64(len(ttlResult.Entries)) - reply)/float64(len(ttlResult.Entries)) * 100)
+			(float64(len(ttlResult.Entries))-reply)/float64(len(ttlResult.Entries))*100)
 	}
 }

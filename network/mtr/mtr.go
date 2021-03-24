@@ -44,8 +44,7 @@ type Mtr struct {
 	pingTTL       map[int]int // 如果已经到达对端，当前ping循环不用不用继续发送ttl
 	currentMaxTTL int
 
-	seq    int32
-	seqMap map[int]*seqValue
+	seqPool *icmp2.SeqPool
 
 	forceIPv4, forceIPv6 bool
 	ident                int           // icmp ident
@@ -75,7 +74,6 @@ func NewMtr(target string, opts ...Option) (*Mtr, error) {
 		dataSize:   icmp2.DefaultDataSize,
 		count:      3,
 		timeout:    icmp2.DefaultTimeout,
-		seqMap:     map[int]*seqValue{},
 		pingTTL:    map[int]int{},
 		currentTTL: 1,
 		buffer:     make([]byte, 4096),
@@ -83,7 +81,7 @@ func NewMtr(target string, opts ...Option) (*Mtr, error) {
 	for _, opt := range opts {
 		opt(m)
 	}
-
+	m.seqPool = icmp2.NewSeqPool(uint16(m.ident))
 	ips, err := net.LookupIP(target)
 
 	for _, ip := range ips {
@@ -301,6 +299,7 @@ func (m *Mtr) waitForReply(waitTime time.Duration) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+
 	switch msg.Type {
 	case ipv6.ICMPTypeTimeExceeded:
 	case ipv4.ICMPTypeTimeExceeded:
@@ -310,32 +309,26 @@ func (m *Mtr) waitForReply(waitTime time.Duration) (bool, error) {
 		if n < pos+4 {
 			break
 		}
-		if int(binary.BigEndian.Uint16(m.buffer[pos:n])) != m.ident {
+		v := m.seqPool.Free(binary.BigEndian.Uint16(m.buffer[pos:n]), binary.BigEndian.Uint16(m.buffer[pos+2:n]))
+		if v == nil {
 			// todo 非本程序发送的
 			break
 		}
-		pkgSeq := binary.BigEndian.Uint16(m.buffer[pos+2 : n])
-		val, ok := m.seqMap[int(pkgSeq)]
-		if !ok {
-			break
-		}
+		val := v.(*seqValue)
 		e := m.result[val.ttl].entries[val.index]
 		e.ip = src
 		e.replyTime = time.Now()
 		m.result[val.ttl].entries[val.index] = e
 		m.result[val.ttl].reply += 1
 		m.evRemove(val)
-		delete(m.seqMap, int(pkgSeq))
 	case ipv4.ICMPTypeEchoReply, ipv6.ICMPTypeEchoReply:
 		if pkt, ok := msg.Body.(*icmp.Echo); ok {
-			if pkt.ID != m.ident {
+			v := m.seqPool.Free(uint16(pkt.ID), uint16(pkt.Seq))
+			if v == nil {
 				// todo 非本程序发送的
 				break
 			}
-			val, ok := m.seqMap[pkt.Seq]
-			if !ok {
-				break
-			}
+			val := v.(*seqValue)
 			e := m.result[val.ttl].entries[val.index]
 			m.result[val.ttl].reply += 1
 			e.ip = src
@@ -343,7 +336,6 @@ func (m *Mtr) waitForReply(waitTime time.Duration) (bool, error) {
 			e.end = true
 			m.result[val.ttl].entries[val.index] = e
 			// todo 已经到目的了
-			delete(m.seqMap, pkt.Seq)
 			m.evRemove(val)
 			if m.pingTTL[val.index] == 0 || m.pingTTL[val.index] > val.ttl {
 				m.pingTTL[val.index] = val.ttl
@@ -357,7 +349,6 @@ func (m *Mtr) waitForReply(waitTime time.Duration) (bool, error) {
 }
 
 func (m *Mtr) send(lastSendTime time.Time) error {
-	seq := m.incr()
 	if m.result[m.currentTTL] == nil {
 		m.result[m.currentTTL] = &seqResult{}
 	}
@@ -366,11 +357,10 @@ func (m *Mtr) send(lastSendTime time.Time) error {
 		index:  len(m.result[m.currentTTL].entries),
 		evTime: lastSendTime.Add(m.timeout),
 	}
+	ident, seq := m.seqPool.Apply(sv)
 	m.result[m.currentTTL].entries = append(m.result[m.currentTTL].entries, seqEntry{
 		t: lastSendTime,
 	})
-
-	m.seqMap[seq] = sv
 	m.evEnqueue(sv)
 	var b []byte
 	var err error
@@ -381,7 +371,7 @@ func (m *Mtr) send(lastSendTime time.Time) error {
 		b, err = (&icmp.Message{
 			Type: ipv4.ICMPTypeEcho, Code: 0,
 			Body: &icmp.Echo{
-				ID: m.ident, Seq: seq,
+				ID: int(ident), Seq: int(seq),
 				Data: m.buffer[:m.dataSize],
 			},
 		}).Marshal(nil)
@@ -396,7 +386,7 @@ func (m *Mtr) send(lastSendTime time.Time) error {
 		b, err = (&icmp.Message{
 			Type: ipv6.ICMPTypeEchoRequest, Code: 0,
 			Body: &icmp.Echo{
-				ID: m.ident, Seq: seq,
+				ID: int(ident), Seq: int(seq),
 				Data: m.buffer[:m.dataSize],
 			},
 		}).Marshal(nil)
@@ -461,8 +451,4 @@ func (m *Mtr) evEnqueue(h *seqValue) {
 		}
 		i = iPrev
 	}
-}
-
-func (m *Mtr) incr() int {
-	return int(atomic.AddInt32(&m.seq, 1))
 }
